@@ -6,6 +6,8 @@
 import ipaddress
 from typing import List, Optional, Tuple
 import sys
+import argparse
+import os
 
 class CIDRZip:
     """A class for efficiently compressing and merging CIDR blocks."""
@@ -127,25 +129,90 @@ def read_cidrs_from_file(filepath: str) -> List[str]:
     """
     return CIDRZip.read_from_file(filepath)
 
-if __name__ == '__main__':
-    if len(sys.argv) <= 1:
-        print("Error: Please provide an input file path")
-        sys.exit(1)
+def main():
+    """Main entry point for the cidrzip command-line tool."""
+    parser = argparse.ArgumentParser(
+        description='Efficiently compress and merge CIDR blocks into a specified number of groups.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  %(prog)s -f input.txt -n 5          # Compress CIDRs from file into 5 groups
+  %(prog)s -f input.txt --json        # Output in JSON format
+  %(prog)s -f input.txt --one-per-line  # Output one CIDR per line
+  %(prog)s -f - -n 3                  # Read from stdin, compress to 3 groups
+        '''
+    )
 
-    input_file = sys.argv[1]
-    zipper = CIDRZip()
+    parser.add_argument('-f', '--file',
+                       type=str,
+                       required=True,
+                       help='Input file containing CIDR ranges (one per line), use - for stdin')
+
+    parser.add_argument('-n', '--num-groups',
+                       type=int,
+                       default=10,
+                       help='Maximum number of groups to create (default: 10)')
+
+    format_group = parser.add_mutually_exclusive_group()
+    format_group.add_argument('--json',
+                            action='store_true',
+                            help='Output results in JSON format')
+    format_group.add_argument('--one-per-line',
+                            action='store_true',
+                            help='Output one CIDR per line (default)')
+
+    parser.add_argument('-q', '--quiet',
+                       action='store_true',
+                       help='Suppress informational output')
+
+    args = parser.parse_args()
 
     try:
-        sample_cidrs = zipper.read_from_file(input_file)
-        # Group into at most 10 CIDRs
-        grouped = zipper.group(sample_cidrs, 10)
-        print("Grouped CIDRs:")
-        for cidr in grouped:
-            print(cidr)
+        # Handle stdin if file is '-'
+        if args.file == '-':
+            if not sys.stdin.isatty():
+                cidrs = [line.strip() for line in sys.stdin
+                        if line.strip() and not line.startswith('#')]
+            else:
+                parser.error("No input provided on stdin")
+        else:
+            zipper = CIDRZip()
+            cidrs = zipper.read_from_file(args.file)
+
+        if not cidrs:
+            if not args.quiet:
+                print("Warning: No valid CIDR ranges found in input", file=sys.stderr)
+            sys.exit(0)
+
+        # Group the CIDRs
+        zipper = CIDRZip()
+        result = zipper.group(cidrs, args.num_groups)
+
+        # Output the results
+        if args.json:
+            import json
+            print(json.dumps(result))
+        else:  # one per line (default)
+            for cidr in result:
+                print(cidr)
+
+        if not args.quiet:
+            print(f"Compressed {len(cidrs)} CIDR(s) into {len(result)} group(s)",
+                  file=sys.stderr)
+
     except FileNotFoundError:
-        print(f"Error: Could not find file {input_file}")
-        sys.exit(1)
+        parser.error(f"Could not find file: {args.file}")
     except ValueError as e:
-        print(f"Error: {e}")
+        parser.error(str(e))
+    except KeyboardInterrupt:
+        sys.exit(130)  # Standard Unix practice: 128 + SIGINT's signal number (2)
+    except BrokenPipeError:
+        # Python flushes standard streams on exit; redirect remaining output
+        # to devnull to avoid another BrokenPipeError at shutdown
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
         sys.exit(1)
+
+if __name__ == '__main__':
+    main()
 

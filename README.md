@@ -11,19 +11,41 @@ cd cidrzip
 
 ## Usage
 
+### Command Line
+
+```bash
+# Basic usage - read from file, compress into 5 groups
+cidrzip.py -f input.txt -n 5
+
+# Read from stdin
+cat input.txt | cidrzip.py -f - -n 3
+
+# Output in JSON format
+cidrzip.py -f input.txt --json
+
+# Suppress informational messages
+cidrzip.py -f input.txt -q
+```
+
+For all options:
+```bash
+cidrzip.py --help
+```
+
+### Python API
+
 ```python
-from cidr_grouping import group_cidrs
+from cidrzip import CIDRZip
+
+# Create a zipper instance
+zipper = CIDRZip()
 
 # Group a list of CIDR ranges into 3 groups
 cidrs = ["192.168.1.0/24", "10.0.0.0/8", "172.16.0.0/12"]
-grouped = group_cidrs(cidrs, 3)
-```
+grouped = zipper.group(cidrs, 3)
 
-You can also read CIDR ranges from a file:
-```python
-from cidr_grouping import read_cidrs_from_file
-
-cidrs = read_cidrs_from_file("path/to/file.txt")
+# Read CIDRs from a file
+cidrs = CIDRZip.read_from_file("path/to/file.txt")
 ```
 
 ## Development
