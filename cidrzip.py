@@ -13,76 +13,105 @@ class CIDRZip:
     """A class for efficiently compressing and merging CIDR blocks."""
 
     @staticmethod
-    def smallest_covering_network(start: ipaddress.IPv4Address, end: ipaddress.IPv4Address) -> ipaddress.IPv4Network:
+    def _cidr_to_ints(cidr: str) -> tuple:
+        """Convert a CIDR string directly to integer start and end addresses."""
+        network = ipaddress.ip_network(cidr)
+        if not isinstance(network, ipaddress.IPv4Network):
+            raise TypeError("Only IPv4 networks are supported")
+        return (int(network.network_address), int(network.broadcast_address))
+
+    @staticmethod
+    def _int_to_network(start_int: int, prefix: int) -> ipaddress.IPv4Network:
+        """Convert an integer and prefix to an IPv4Network."""
+        if not 0 <= prefix <= 32:
+            raise ValueError("IPv4 prefix must be between 0 and 32")
+        start_addr = str(ipaddress.IPv4Address(start_int))
+        return ipaddress.ip_network(f"{start_addr}/{prefix}", strict=False)
+
+    @staticmethod
+    def smallest_covering_network_ints(start_int: int, end_int: int) -> tuple:
         """
-        Given two IPv4Addresses start and end, returns the smallest IPv4Network (with strict=False)
-        that covers the entire range [start, end].
+        Given start and end as integers, returns the smallest network that covers the range.
+        Returns (start_int, prefix_len).
         """
-        start_int = int(start)
-        end_int = int(end)
         diff = start_int ^ end_int
         prefix = 32 if diff == 0 else 32 - diff.bit_length()
-        return ipaddress.ip_network((start, prefix), strict=False)
+        # Mask the start address to ensure it's the network address
+        mask = ((1 << 32) - 1) << (32 - prefix)
+        network_int = start_int & mask
+        return (network_int, prefix)
 
-    def group(self, cidrs: List[str], n: int) -> List[str]:
+    def _merge_networks_greedy(self, collapsed: list, n: int) -> List[str]:
         """
-        Group a list of CIDR strings into at most n larger, non-overlapping CIDR ranges.
-
-        Args:
-            cidrs: List of CIDR strings to group
-            n: Maximum number of groups to create
-
-        Returns:
-            List of CIDR strings representing the grouped networks
-
-        If the collapsed (exact) set of CIDRs is already ≤ n, return it.
-        Otherwise, merge contiguous blocks (possibly adding extra addresses)
-        so that the output is exactly n CIDR ranges while minimizing extra coverage.
+        Greedy approach to merge networks. Merges adjacent networks with lowest cost first.
         """
-        if not cidrs:
-            return []
+        while len(collapsed) > n:
+            # Find the best merge (lowest cost)
+            best_cost = float('inf')
+            best_idx = -1
 
-        # Parse the CIDR strings into IPv4Network objects
-        nets = [ipaddress.ip_network(c) for c in cidrs]
+            for i in range(len(collapsed) - 1):
+                start = collapsed[i][0]
+                end = collapsed[i + 1][1]
+                net_int, prefix = self.smallest_covering_network_ints(start, end)
+                size = 1 << (32 - prefix)
+                current_size = collapsed[i][1] - collapsed[i][0] + 1
+                current_size += collapsed[i + 1][1] - collapsed[i + 1][0] + 1
+                cost = size - current_size
 
-        # Collapse (merge) any overlapping or immediately adjacent networks
-        collapsed = list(ipaddress.collapse_addresses(nets))
-        # Sort by network address (as integers)
-        collapsed.sort(key=lambda net: int(net.network_address))
+                if cost < best_cost:
+                    best_cost = cost
+                    best_idx = i
+
+            # Merge the best pair
+            start = collapsed[best_idx][0]
+            end = collapsed[best_idx + 1][1]
+            collapsed[best_idx] = (start, end)
+            collapsed.pop(best_idx + 1)
+
+        # Convert to CIDR strings
+        result = []
+        for start, end in collapsed:
+            net_int, prefix = self.smallest_covering_network_ints(start, end)
+            result.append(str(self._int_to_network(net_int, prefix)))
+        return result
+
+    def _merge_networks_windowed(self, collapsed: list, n: int, window_size: int) -> List[str]:
+        """
+        Dynamic programming approach that only considers merging within a fixed window size.
+        """
         m = len(collapsed)
+        if window_size > m:
+            window_size = m
 
-        # If we already have n or fewer groups, we are done
-        if n >= m:
-            return [str(net) for net in collapsed]
-
-        # Precompute a prefix sum of the sizes for quick segment size computation
-        sizes = [net.num_addresses for net in collapsed]
+        # Precompute sizes for quick segment size computation
+        sizes = [(end - start + 1) for start, end in collapsed]
         prefix_sum = [0] * (m + 1)
         for i in range(m):
             prefix_sum[i+1] = prefix_sum[i] + sizes[i]
 
-        # Precompute merge costs and merged networks for all possible segments
-        cost = [[0] * m for _ in range(m)]
+        # Precompute merge costs and merged networks for all possible segments within window
+        cost = [[float('inf')] * m for _ in range(m)]
         merged_net = [[None] * m for _ in range(m)]
         for i in range(m):
-            for j in range(i, m):
-                start = collapsed[i].network_address
-                end = collapsed[j].broadcast_address
-                merged = self.smallest_covering_network(start, end)
-                merged_net[i][j] = merged
+            for j in range(i, min(i + window_size, m)):
+                start = collapsed[i][0]
+                end = collapsed[j][1]
+                net_int, prefix = self.smallest_covering_network_ints(start, end)
+                size = 1 << (32 - prefix)
+                merged_net[i][j] = (net_int, prefix)
                 total = prefix_sum[j+1] - prefix_sum[i]
-                cost[i][j] = merged.num_addresses - total
+                cost[i][j] = size - total
 
-        # Dynamic programming to find optimal segmentation
+        # Dynamic programming with window constraint
         dp = [[float('inf')] * (n+1) for _ in range(m+1)]
         partition = [[-1] * (n+1) for _ in range(m+1)]
 
         dp[m][0] = 0  # Base case: no networks left, 0 segments needed
 
-        # Fill the DP table
         for i in range(m - 1, -1, -1):
             for s in range(1, n+1):
-                for j in range(i, m - s + 1):
+                for j in range(i, min(i + window_size, m - s + 1)):
                     current = cost[i][j] + dp[j+1][s-1]
                     if current < dp[i][s]:
                         dp[i][s] = current
@@ -93,12 +122,74 @@ class CIDRZip:
         i, segs_left = 0, n
         while segs_left:
             j = partition[i][segs_left]
+            if j == -1:  # No valid solution found
+                # Fall back to greedy for remaining segments
+                remaining = [(start, end) for start, end in collapsed[i:]]
+                greedy_result = self._merge_networks_greedy(remaining, segs_left)
+                segments.extend([(i+idx, i+idx) for idx in range(len(greedy_result))])
+                break
             segments.append((i, j))
             i = j + 1
             segs_left -= 1
 
         # Convert segments to CIDR strings
-        return [str(merged_net[i][j]) for i, j in segments]
+        result = []
+        for i, j in segments:
+            if i == j:  # Single network
+                start, end = collapsed[i]
+                net_int, prefix = self.smallest_covering_network_ints(start, end)
+                result.append(str(self._int_to_network(net_int, prefix)))
+            else:  # Merged network
+                net_int, prefix = merged_net[i][j]
+                result.append(str(self._int_to_network(net_int, prefix)))
+        return result
+
+    def group(self, cidrs: List[str], n: int, mode: str = 'optimal', window_size: int = 50) -> List[str]:
+        """
+        Group a list of CIDR strings into at most n larger, non-overlapping CIDR ranges.
+
+        Args:
+            cidrs: List of CIDR strings to group
+            n: Maximum number of groups to create
+            mode: One of 'optimal' (default), 'greedy', or 'windowed'
+            window_size: For windowed mode, max distance to consider merging (default: 50)
+        """
+        if not cidrs:
+            return []
+
+        # Convert CIDRs to integer ranges and sort by start address
+        ranges = [self._cidr_to_ints(c) for c in cidrs]
+        ranges.sort()  # Sort by start address
+
+        # Collapse overlapping ranges
+        collapsed = []
+        current_start, current_end = ranges[0]
+
+        for start, end in ranges[1:]:
+            if start <= current_end + 1:
+                current_end = max(current_end, end)
+            else:
+                collapsed.append((current_start, current_end))
+                current_start, current_end = start, end
+        collapsed.append((current_start, current_end))
+
+        m = len(collapsed)
+
+        # If we already have n or fewer groups, convert back to CIDRs and return
+        if n >= m:
+            result = []
+            for start, end in collapsed:
+                net_int, prefix = self.smallest_covering_network_ints(start, end)
+                result.append(str(self._int_to_network(net_int, prefix)))
+            return result
+
+        # Choose merging strategy based on mode
+        if mode == 'greedy':
+            return self._merge_networks_greedy(collapsed, n)
+        elif mode == 'windowed':
+            return self._merge_networks_windowed(collapsed, n, window_size)
+        else:  # optimal mode
+            return self._merge_networks_windowed(collapsed, n, m)  # window_size=m means consider all pairs
 
     @staticmethod
     def read_from_file(filepath: str) -> List[str]:
@@ -136,7 +227,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
-  %(prog)s -f input.txt -n 5          # Compress CIDRs from file into 5 groups
+  %(prog)s -f input.txt -n 5          # Compress CIDRs from file into 5 groups (optimal mode)
+  %(prog)s -f input.txt -n 5 --greedy # Use faster greedy mode
+  %(prog)s -f input.txt -n 5 -w 10    # Use windowed mode with window size 10
   %(prog)s -f input.txt --json        # Output in JSON format
   %(prog)s -f input.txt --one-per-line  # Output one CIDR per line
   %(prog)s -f - -n 3                  # Read from stdin, compress to 3 groups
@@ -152,6 +245,15 @@ Examples:
                        type=int,
                        default=10,
                        help='Maximum number of groups to create (default: 10)')
+
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument('--greedy',
+                           action='store_true',
+                           help='Use greedy mode (faster but may be less optimal)')
+    mode_group.add_argument('-w', '--window',
+                           type=int,
+                           metavar='SIZE',
+                           help='Use windowed mode with specified window size')
 
     format_group = parser.add_mutually_exclusive_group()
     format_group.add_argument('--json',
@@ -184,9 +286,23 @@ Examples:
                 print("Warning: No valid CIDR ranges found in input", file=sys.stderr)
             sys.exit(0)
 
+        # Determine mode and parameters
+        if args.greedy:
+            mode = 'greedy'
+            window_size = None
+        elif args.window is not None:
+            mode = 'windowed'
+            window_size = args.window
+        else:
+            mode = 'optimal'
+            window_size = None
+
         # Group the CIDRs
         zipper = CIDRZip()
-        result = zipper.group(cidrs, args.num_groups)
+        if mode == 'windowed':
+            result = zipper.group(cidrs, args.num_groups, mode=mode, window_size=window_size)
+        else:
+            result = zipper.group(cidrs, args.num_groups, mode=mode)
 
         # Output the results
         if args.json:
@@ -197,7 +313,7 @@ Examples:
                 print(cidr)
 
         if not args.quiet:
-            print(f"Compressed {len(cidrs)} CIDR(s) into {len(result)} group(s)",
+            print(f"Compressed {len(cidrs)} CIDR(s) into {len(result)} group(s) using {mode} mode",
                   file=sys.stderr)
 
     except FileNotFoundError:
