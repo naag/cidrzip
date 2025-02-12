@@ -1,7 +1,9 @@
-.PHONY: test test-verbose test-quiet clean help
+.PHONY: test test-verbose test-quiet clean help benchmark profile
 
 PYTHON=python3
 TEST_FILE=test_cidrzip.py
+BENCHMARK_FILE=benchmark_cidrzip.py
+PROFILE_FILE=profile_cidrzip.py
 
 # Default target when no arguments are given
 .DEFAULT_GOAL := help
@@ -13,6 +15,14 @@ test:
 # Run all tests with verbose output
 test-verbose:
 	$(PYTHON) -m unittest -v $(TEST_FILE)
+
+# Run benchmarks with different optimization modes
+benchmark:
+	$(PYTHON) $(BENCHMARK_FILE)
+
+# Run profiling with different optimization modes
+profile:
+	$(PYTHON) $(PROFILE_FILE)
 
 # Remove Python cache files and test artifacts
 clean:
@@ -28,10 +38,9 @@ help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Available targets:"
-	@echo ""
-	@awk '/^[a-zA-Z_-]+:/ { \
-		if (match(lastline, /^# /)) { \
-			printf "  %-15s %s\n", substr($$1, 1, length($$1)-1), substr(lastline, 3); \
-		} \
-	} \
-	{ lastline = $$0 }' $(MAKEFILE_LIST)
+	@echo "  test           Run all tests with normal output"
+	@echo "  test-verbose   Run all tests with verbose output"
+	@echo "  benchmark      Run benchmarks with different optimization modes"
+	@echo "  profile        Run profiling with different optimization modes"
+	@echo "  clean          Remove Python cache files and test artifacts"
+	@echo "  help           Show this help message"
