@@ -2,6 +2,18 @@
 
 A Python tool for efficiently compressing and merging CIDR blocks. It finds the smallest covering network for a range of IP addresses and groups multiple CIDR ranges into a specified number of groups.
 
+## Quick Usage
+
+```bash
+# Compress multiple CIDRs into 3 groups
+echo "192.168.1.0/24 10.0.0.0/8 172.16.0.0/12 192.168.2.0/24 10.10.0.0/16" | ./cidrzip.py -f -
+
+# Output:
+# 10.0.0.0/8
+# 172.16.0.0/12
+# 192.168.0.0/23
+```
+
 ## Installation
 
 ```bash

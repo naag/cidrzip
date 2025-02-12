@@ -194,17 +194,22 @@ class CIDRZip:
     @staticmethod
     def read_from_file(filepath: str) -> List[str]:
         """
-        Read CIDRs from a file, one per line.
+        Read CIDRs from a file, one per line or space-separated.
         Empty lines and lines starting with # are ignored.
 
         Args:
-            filepath: Path to the file containing CIDR ranges
+            filepath: Path to the file containing CIDR ranges, use - for stdin
 
         Returns:
             List of CIDR strings from the file
         """
-        with open(filepath, 'r') as f:
-            return [line.strip() for line in f if line.strip() and not line.startswith('#')]
+        with open(filepath, 'r') if filepath != '-' else sys.stdin as f:
+            cidrs = []
+            for line in f:
+                if line.strip() and not line.startswith('#'):
+                    # Split on whitespace and add non-empty CIDRs
+                    cidrs.extend(cidr for cidr in line.strip().split() if cidr)
+            return cidrs
 
 def group_cidrs(cidrs: List[str], n: int) -> List[str]:
     """
@@ -273,8 +278,8 @@ Examples:
         # Handle stdin if file is '-'
         if args.file == '-':
             if not sys.stdin.isatty():
-                cidrs = [line.strip() for line in sys.stdin
-                        if line.strip() and not line.startswith('#')]
+                zipper = CIDRZip()
+                cidrs = zipper.read_from_file('-')  # Use the class's built-in handling
             else:
                 parser.error("No input provided on stdin")
         else:
@@ -304,16 +309,15 @@ Examples:
         else:
             result = zipper.group(cidrs, args.num_groups, mode=mode)
 
-        # Output the results
+        # Output the results without extra newlines
         if args.json:
             import json
-            print(json.dumps(result))
+            print(json.dumps(result), end='')
         else:  # one per line (default)
-            for cidr in result:
-                print(cidr)
+            print('\n'.join(result), end='')
 
         if not args.quiet:
-            print(f"Compressed {len(cidrs)} CIDR(s) into {len(result)} group(s) using {mode} mode",
+            print(f"\nCompressed {len(cidrs)} CIDR(s) into {len(result)} group(s) using {mode} mode",
                   file=sys.stderr)
 
     except FileNotFoundError:

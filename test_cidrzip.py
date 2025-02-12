@@ -412,5 +412,54 @@ class TestCIDRZip(unittest.TestCase):
                 self.assertLessEqual(len(result), n)
                 self._verify_coverage(input_cidrs, result)
 
+    def test_space_separated_input(self):
+        """Test reading space-separated CIDRs from stdin"""
+        # Create a temporary file with space-separated CIDRs
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+            f.write("192.168.1.0/24 10.0.0.0/8 172.16.0.0/12 192.168.2.0/24 10.10.0.0/16")
+            temp_path = f.name
+
+        try:
+            # Read and verify the CIDRs
+            cidrs = CIDRZip.read_from_file(temp_path)
+            self.assertEqual(len(cidrs), 5)
+            self.assertIn("192.168.1.0/24", cidrs)
+            self.assertIn("10.0.0.0/8", cidrs)
+            self.assertIn("172.16.0.0/12", cidrs)
+            self.assertIn("192.168.2.0/24", cidrs)
+            self.assertIn("10.10.0.0/16", cidrs)
+
+            # Test grouping the space-separated CIDRs
+            result = self.zipper.group(cidrs, 3)
+            self.assertEqual(len(result), 3)
+
+            # Verify all input CIDRs are covered
+            self._verify_coverage(cidrs, result)
+
+            # Verify specific expected merges
+            self.assertIn("10.0.0.0/8", result)  # Should keep the large /8
+            self.assertIn("172.16.0.0/12", result)  # Should keep the /12
+            self.assertIn("192.168.0.0/22", result)  # Should merge the /24s into smallest covering network
+
+        finally:
+            os.unlink(temp_path)  # Clean up temp file
+
+    def test_mixed_format_input(self):
+        """Test reading mixed format input (both newline and space-separated)"""
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+            f.write("192.168.1.0/24 10.0.0.0/8\n")
+            f.write("172.16.0.0/12 192.168.2.0/24\n")
+            f.write("10.10.0.0/16")
+            temp_path = f.name
+
+        try:
+            cidrs = CIDRZip.read_from_file(temp_path)
+            self.assertEqual(len(cidrs), 5)
+            result = self.zipper.group(cidrs, 3)
+            self.assertEqual(len(result), 3)
+            self._verify_coverage(cidrs, result)
+        finally:
+            os.unlink(temp_path)  # Clean up temp file
+
 if __name__ == '__main__':
     unittest.main()
