@@ -1,6 +1,6 @@
-# CIDR Grouping Tool
+# cidrzip
 
-A Python tool for efficiently grouping and manipulating CIDR ranges. It can find the smallest covering network for a range of IP addresses and group multiple CIDR ranges into a specified number of groups.
+A Python tool for efficiently compressing and merging CIDR blocks. It finds the smallest covering network for a range of IP addresses and groups multiple CIDR ranges into a specified number of groups.
 
 ## Installation
 

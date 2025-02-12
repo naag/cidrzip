@@ -4,14 +4,18 @@
 # LICENSE file in the root directory of this source tree.
 
 import unittest
-from cidr_grouping import group_cidrs
+from cidrzip import CIDRZip
 import ipaddress
 import tempfile
 import os
 import random
 from typing import List, Tuple
 
-class TestCIDRGrouping(unittest.TestCase):
+class TestCIDRZip(unittest.TestCase):
+    def setUp(self):
+        """Set up test fixtures before each test method."""
+        self.zipper = CIDRZip()
+
     @staticmethod
     def _generate_random_ip() -> str:
         """Generate a random IPv4 address"""
@@ -98,11 +102,11 @@ class TestCIDRGrouping(unittest.TestCase):
 
     def test_empty_input(self):
         """Test with empty input list"""
-        self.assertEqual(group_cidrs([], 5), [])
+        self.assertEqual(self.zipper.group([], 5), [])
 
     def test_single_cidr(self):
         """Test with a single CIDR"""
-        self.assertEqual(group_cidrs(["192.168.1.1/32"], 1), ["192.168.1.1/32"])
+        self.assertEqual(self.zipper.group(["192.168.1.1/32"], 1), ["192.168.1.1/32"])
 
     def test_adjacent_ips(self):
         """Test with adjacent IPs that should be merged"""
@@ -112,7 +116,7 @@ class TestCIDRGrouping(unittest.TestCase):
             "192.168.1.3/32",
             "192.168.1.4/32"
         ]
-        result = group_cidrs(input_cidrs, 1)
+        result = self.zipper.group(input_cidrs, 1)
         self.assertEqual(len(result), 1)
         # The result should cover all input IPs
         self.assertTrue(all(self._is_ip_in_cidr(ip, result[0]) for ip in input_cidrs))
@@ -125,13 +129,13 @@ class TestCIDRGrouping(unittest.TestCase):
             "192.168.1.20/32"
         ]
         # With n=2, should split into two ranges
-        result = group_cidrs(input_cidrs, 2)
+        result = self.zipper.group(input_cidrs, 2)
         self.assertEqual(len(result), 2)
 
     def test_large_n(self):
         """Test when n is larger than number of input CIDRs"""
         input_cidrs = ["192.168.1.1/32", "192.168.1.2/32"]
-        result = group_cidrs(input_cidrs, 10)
+        result = self.zipper.group(input_cidrs, 10)
         # Should return the collapsed form, which might be one or two CIDRs
         self.assertLessEqual(len(result), 2)
         # Verify all input IPs are covered
@@ -141,7 +145,7 @@ class TestCIDRGrouping(unittest.TestCase):
     def test_exact_n(self):
         """Test when n equals number of input CIDRs"""
         input_cidrs = ["192.168.1.1/32", "192.168.2.1/32"]
-        result = group_cidrs(input_cidrs, 2)
+        result = self.zipper.group(input_cidrs, 2)
         self.assertEqual(len(result), 2)
         self.assertEqual(set(result), set(["192.168.1.1/32", "192.168.2.1/32"]))
 
@@ -154,7 +158,7 @@ class TestCIDRGrouping(unittest.TestCase):
             "192.168.2.2/32",
             "192.168.3.1/32"
         ]
-        result = group_cidrs(input_cidrs, 2)
+        result = self.zipper.group(input_cidrs, 2)
         self.assertEqual(len(result), 2)
         # Verify all input IPs are covered
         for ip in input_cidrs:
@@ -163,12 +167,12 @@ class TestCIDRGrouping(unittest.TestCase):
     def test_invalid_cidr(self):
         """Test with invalid CIDR notation"""
         with self.assertRaises(ValueError):
-            group_cidrs(["invalid-cidr"], 1)
+            self.zipper.group(["invalid-cidr"], 1)
 
     def test_mixed_ip_versions(self):
         """Test with mixed IPv4 and IPv6 addresses (should raise TypeError)"""
         with self.assertRaises(TypeError):
-            group_cidrs(["192.168.1.1/32", "2001:db8::1/128"], 1)
+            self.zipper.group(["192.168.1.1/32", "2001:db8::1/128"], 1)
 
     def test_overlapping_cidrs(self):
         """Test with overlapping CIDRs"""
@@ -177,19 +181,18 @@ class TestCIDRGrouping(unittest.TestCase):
             "192.168.1.0/25",
             "192.168.1.128/25"
         ]
-        result = group_cidrs(input_cidrs, 1)
+        result = self.zipper.group(input_cidrs, 1)
         self.assertEqual(result, ["192.168.1.0/24"])
 
     def test_real_world_sample(self):
         """Test with the sample data from the example file"""
-        with open('examples/sample_cidrs.txt', 'r') as f:
-            sample_cidrs = [line.strip() for line in f if line.strip()]
+        sample_cidrs = CIDRZip.read_from_file('examples/sample_cidrs.txt')
 
         # Test with different n values
-        result_10 = group_cidrs(sample_cidrs, 10)
+        result_10 = self.zipper.group(sample_cidrs, 10)
         self.assertLessEqual(len(result_10), 10)
 
-        result_1 = group_cidrs(sample_cidrs, 1)
+        result_1 = self.zipper.group(sample_cidrs, 1)
         self.assertEqual(len(result_1), 1)
 
         # Test that all original IPs are covered in the results
@@ -232,7 +235,7 @@ class TestCIDRGrouping(unittest.TestCase):
 
         # Test with different n values
         for n in [1, 5, 10, 15]:
-            result = group_cidrs(input_cidrs, n)
+            result = self.zipper.group(input_cidrs, n)
             self.assertLessEqual(len(result), n)
             self._verify_coverage(input_cidrs, result)
 
@@ -256,7 +259,7 @@ class TestCIDRGrouping(unittest.TestCase):
             "10.0.0.1/32"
         ]
 
-        result = group_cidrs(input_cidrs, 3)
+        result = self.zipper.group(input_cidrs, 3)
         self.assertLessEqual(len(result), 3)
         self._verify_coverage(input_cidrs, result)
 
@@ -270,12 +273,12 @@ class TestCIDRGrouping(unittest.TestCase):
         ]
 
         # Even with n=1, the cost of merging should be very high
-        result = group_cidrs(input_cidrs, 1)
+        result = self.zipper.group(input_cidrs, 1)
         self.assertEqual(len(result), 1)
         self._verify_coverage(input_cidrs, result)
 
         # With n=2, should split into two groups
-        result = group_cidrs(input_cidrs, 2)
+        result = self.zipper.group(input_cidrs, 2)
         self.assertEqual(len(result), 2)
         self._verify_coverage(input_cidrs, result)
 
@@ -300,7 +303,7 @@ class TestCIDRGrouping(unittest.TestCase):
 
         # Test with different n values
         for n in [1, 3, 5]:
-            result = group_cidrs(input_cidrs, n)
+            result = self.zipper.group(input_cidrs, n)
             self.assertLessEqual(len(result), n)
             self._verify_coverage(input_cidrs, result)
 
@@ -311,7 +314,7 @@ class TestCIDRGrouping(unittest.TestCase):
 
         # Test merging into different numbers of groups
         for n in [1, 10, 50]:
-            result = group_cidrs(input_cidrs, n)
+            result = self.zipper.group(input_cidrs, n)
             self.assertLessEqual(len(result), n)
             self._verify_coverage(input_cidrs, result)
 
@@ -341,7 +344,7 @@ class TestCIDRGrouping(unittest.TestCase):
         ]
 
         # Test with max group size 10
-        result = group_cidrs(input_cidrs, 10)
+        result = self.zipper.group(input_cidrs, 10)
 
         # Verify we get at most 10 groups
         self.assertLessEqual(len(result), 10)
@@ -359,7 +362,7 @@ class TestCIDRGrouping(unittest.TestCase):
             for dist in distributions:
                 input_cidrs = self._generate_random_cidrs(size, dist)
                 for n in [1, max(size // 10, 1), size // 2]:  # Removed full size test
-                    result = group_cidrs(input_cidrs, n)
+                    result = self.zipper.group(input_cidrs, n)
                     self.assertLessEqual(len(result), n)
                     self._verify_coverage(input_cidrs, result)
 
@@ -371,7 +374,7 @@ class TestCIDRGrouping(unittest.TestCase):
             for dist in ["sparse", "mixed"]:  # Only test sparse and mixed
                 input_cidrs = self._generate_random_cidrs(size, dist)
                 for group_size in [1, 2, min(size, 8)]:  # Reduced group sizes
-                    result = group_cidrs(input_cidrs, group_size)
+                    result = self.zipper.group(input_cidrs, group_size)
                     self.assertLessEqual(len(result), group_size)
                     self._verify_coverage(input_cidrs, result)
 
@@ -382,7 +385,7 @@ class TestCIDRGrouping(unittest.TestCase):
             input_cidrs = self._generate_random_cidrs(200, dist)  # Reduced from 300
             group_sizes = [1, 10, 50, 200]  # Reduced number of group sizes
             for n in group_sizes:
-                result = group_cidrs(input_cidrs, n)
+                result = self.zipper.group(input_cidrs, n)
                 self.assertLessEqual(len(result), n)
                 self._verify_coverage(input_cidrs, result)
 
@@ -405,7 +408,7 @@ class TestCIDRGrouping(unittest.TestCase):
                     continue
 
             for n in [1, 10, 30]:  # Reduced number of group sizes
-                result = group_cidrs(input_cidrs, n)
+                result = self.zipper.group(input_cidrs, n)
                 self.assertLessEqual(len(result), n)
                 self._verify_coverage(input_cidrs, result)
 

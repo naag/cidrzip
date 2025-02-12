@@ -1,7 +1,7 @@
 .PHONY: test test-verbose test-quiet clean help
 
 PYTHON=python3
-TEST_FILE=test_cidr_grouping.py
+TEST_FILE=test_cidrzip.py
 
 # Default target when no arguments are given
 .DEFAULT_GOAL := help
